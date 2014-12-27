@@ -28,22 +28,21 @@ define concat::fragment(
     $target,
     $content = undef,
     $source  = undef,
-    $order   = 10,
-    $ensure  = 'present',
+    $order   = '10',
+    $ensure  = undef,
     $mode    = undef,
     $owner   = undef,
     $group   = undef,
     $backup  = undef
 ) {
   validate_string($target)
-  if ! ($ensure in [ 'present', 'absent' ]) {
-    warning('Passing a value other than \'present\' or \'absent\' as the $ensure parameter to concat::fragment is deprecated.  If you want to use the content of a file as a fragment please use the $source parameter.')
-  }
   validate_string($content)
   if !(is_string($source) or is_array($source)) {
     fail('$source is not a string or an Array.')
   }
-  validate_string($order)
+  if !(is_string($order) or is_integer($order)) {
+    fail('$order is not a string or integer.')
+  }
   if $mode {
     warning('The $mode parameter to concat::fragment is deprecated and has no effect')
   }
@@ -56,6 +55,14 @@ define concat::fragment(
   if $backup {
     warning('The $backup parameter to concat::fragment is deprecated and has no effect')
   }
+  if $ensure == undef {
+    $my_ensure = concat_getparam(Concat[$target], 'ensure')
+  } else {
+    if ! ($ensure in [ 'present', 'absent' ]) {
+      warning('Passing a value other than \'present\' or \'absent\' as the $ensure parameter to concat::fragment is deprecated.  If you want to use the content of a file as a fragment please use the $source parameter.')
+    }
+    $my_ensure = $ensure
+  }
 
   include concat::setup
 
@@ -63,6 +70,8 @@ define concat::fragment(
   $safe_target_name = regsubst($target, '[/:\n]', '_', 'GM')
   $concatdir        = $concat::setup::concatdir
   $fragdir          = "${concatdir}/${safe_target_name}"
+  $fragowner        = $concat::setup::fragment_owner
+  $fragmode         = $concat::setup::fragment_mode
   $noop             = $concat::setup::noop
 
   # The file type's semantics are problematic in that ensure => present will
@@ -72,18 +81,20 @@ define concat::fragment(
 
   # be paranoid and only allow the fragment's file resource's ensure param to
   # be file, absent, or a file target
-  $safe_ensure = $ensure ? {
+  $safe_ensure = $my_ensure ? {
     ''        => 'file',
     undef     => 'file',
     'file'    => 'file',
     'present' => 'file',
     'absent'  => 'absent',
-    default   => $ensure,
+    default   => $my_ensure,
   }
 
   # if it looks line ensure => /target syntax was used, fish that out
-  if ! ($ensure in ['', 'present', 'absent', 'file' ]) {
-    $ensure_target = $ensure
+  if ! ($my_ensure in ['', 'present', 'absent', 'file' ]) {
+    $ensure_target = $my_ensure
+  } else {
+    $ensure_target = undef
   }
 
   # the file type's semantics only allows one of: ensure => /target, content,
@@ -102,11 +113,12 @@ define concat::fragment(
   # can be relied on to be present
   file { "${fragdir}/fragments/${order}_${safe_name}":
     ensure  => $safe_ensure,
-    owner   => $::id,
-    mode    => '0640',
+    owner   => $fragowner,
+    mode    => $fragmode,
     source  => $source,
     content => $content,
     backup  => false,
+    replace => true,
     alias   => "concat_fragment_${name}",
     notify  => Exec["concat_${target}"],
     noop    => $noop,
